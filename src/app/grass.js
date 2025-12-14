@@ -25,6 +25,11 @@ export class GrassOptions {
   flowerCount = 50;
 
   /**
+   * Maximum number of flower instances per color
+   */
+  maxFlowerCount = 5000;
+
+  /**
    * Size of the grass patches
    */
   scale = 100;
@@ -72,11 +77,14 @@ export class Grass extends THREE.Object3D {
     this.flowers = new THREE.Group();
     this.add(this.flowers);
 
+    // Keep track of instanced meshes
+    this.flowerMeshes = [];
+
     this.fetchAssets().then(() => {
       this.generateGrass();
-      this.generateFlowers(_whiteFlower);
-      this.generateFlowers(_blueFlower);
-      this.generateFlowers(_yellowFlower);
+      this.generateFlowerInstances(_whiteFlower);
+      this.generateFlowerInstances(_blueFlower);
+      this.generateFlowerInstances(_yellowFlower);
     });
   }
 
@@ -86,6 +94,21 @@ export class Grass extends THREE.Object3D {
 
   set instanceCount(value) {
     this.grassMesh.count = value;
+  }
+
+  get flowerCount() {
+    return this.options.flowerCount;
+  }
+
+  set flowerCount(value) {
+    this.options.flowerCount = value;
+    this.updateFlowerCount();
+  }
+
+  updateFlowerCount() {
+    this.flowerMeshes.forEach(mesh => {
+      mesh.count = Math.min(mesh.userData.currCount, this.options.flowerCount);
+    });
   }
 
   /**
@@ -110,7 +133,7 @@ export class Grass extends THREE.Object3D {
           if (o.material.map) {
             o.material = new THREE.MeshPhongMaterial({ map: o.material.map });
           }
-          this.appendWindShader(o.material);
+          this.appendWindShader(o.material, true);
         }
       });
     });
@@ -220,8 +243,39 @@ export class Grass extends THREE.Object3D {
    * 
    * @param {THREE.Mesh} flowerMesh 
    */
-  generateFlowers(flowerMesh) {
-    for (let i = 0; i < this.options.flowerCount; i++) {
+  /**
+   * 
+   * @param {THREE.Mesh} flowerMesh 
+   */
+  generateFlowerInstances(flowerMesh) {
+    const meshes = [];
+
+    // 1. Collect all meshes
+    flowerMesh.traverse((o) => {
+      if (o.isMesh && o.geometry && o.material) {
+        const geometry = o.geometry.clone();
+        const material = o.material;
+        // If the mesh is a child of the root object, we must bake its transform
+        // into the geometry, because InstancedMesh flattens the hierarchy.
+        if (o !== flowerMesh) {
+          o.updateMatrix();
+          geometry.applyMatrix4(o.matrix);
+        }
+        meshes.push({ geometry, material });
+      }
+    });
+
+    if (meshes.length === 0) {
+      console.warn("Could not find geometry or material for flower", flowerMesh);
+      return;
+    }
+
+    // 2. Generate instance matrices once
+    const dummy = new THREE.Object3D();
+    const matrices = [];
+    let count = 0;
+
+    for (let i = 0; i < this.options.maxFlowerCount; i++) {
       const r = 10 + Math.random() * 200;
       const theta = Math.random() * 2.0 * Math.PI;
 
@@ -239,14 +293,39 @@ export class Grass extends THREE.Object3D {
 
       if (n > this.options.patchiness && Math.random() + 0.8 > this.options.patchiness) { continue; }
 
-      const flower = flowerMesh.clone();
-      flower.position.copy(p);
-      flower.rotation.set(0, 2 * Math.PI * Math.random(), 0);
+      dummy.position.copy(p);
+      dummy.rotation.set(0, 2 * Math.PI * Math.random(), 0);
       const scale = 0.02 + 0.03 * Math.random();
-      flower.scale.set(scale, scale, scale);
-
-      this.flowers.add(flower);
+      dummy.scale.set(scale, scale, scale);
+      dummy.updateMatrix();
+      matrices.push(dummy.matrix.clone());
+      count++;
     }
+
+    // 3. Create InstancedMesh for each component mesh
+    meshes.forEach(({ geometry, material }) => {
+      const instancedMesh = new THREE.InstancedMesh(
+        geometry,
+        material,
+        this.options.maxFlowerCount
+      );
+
+      // Apply shared matriecs
+      for (let i = 0; i < matrices.length; i++) {
+        instancedMesh.setMatrixAt(i, matrices[i]);
+      }
+
+      // Store actual generated count to not exceed it
+      instancedMesh.userData.currCount = count;
+      instancedMesh.count = Math.min(count, this.options.flowerCount);
+
+      instancedMesh.receiveShadow = true;
+      instancedMesh.castShadow = true;
+      instancedMesh.instanceMatrix.needsUpdate = true;
+
+      this.flowers.add(instancedMesh);
+      this.flowerMeshes.push(instancedMesh);
+    });
   }
 
   /**
@@ -320,7 +399,7 @@ export class Grass extends THREE.Object3D {
         `
         vec4 mvPosition = instanceMatrix * vec4(transformed, 1.0);
         float windOffset = 2.0 * 3.14 * simplex2d((modelMatrix * mvPosition).xz / uWindScale);
-        vec3 windSway = position.y * uWindStrength * 
+        vec3 windSway = mvPosition.y * uWindStrength * 
         sin(uTime * uWindFrequency + windOffset) *
         cos(uTime * 1.4 * uWindFrequency + windOffset);
 
@@ -332,7 +411,7 @@ export class Grass extends THREE.Object3D {
         `
         vec4 mvPosition = vec4(transformed, 1.0);
         float windOffset = 2.0 * 3.14 * simplex2d((modelMatrix * mvPosition).xz / uWindScale);
-        vec3 windSway = 0.2 * position.y * uWindStrength * 
+        vec3 windSway = 0.2 * mvPosition.y * uWindStrength * 
         sin(uTime * uWindFrequency + windOffset) *
         cos(uTime * 1.4 * uWindFrequency + windOffset);
 
