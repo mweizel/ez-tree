@@ -59,6 +59,25 @@ document.addEventListener('DOMContentLoaded', async () => {
   window.addEventListener('resize', resize);
 
   setupUI(tree, environment, renderer, scene, camera, controls, 'Ash Medium');
+
+  // Neurofeedback Bridge Polling
+  setInterval(async () => {
+    try {
+      const resp = await fetch('http://localhost:8080/data');
+      if (resp.ok) {
+        const data = await resp.json();
+        // data.value is normalized 0.0 - 1.0
+        if (environment && environment.grass) {
+          // Scale to 0-2000 flowers
+          const targetCount = Math.floor(data.value * 2000);
+          environment.grass.flowerCount = targetCount;
+        }
+      }
+    } catch (e) {
+      // Bridge likely not running, suppress error
+    }
+  }, 100);
+
   animate();
   resize();
 
