@@ -67,10 +67,19 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (resp.ok) {
         const data = await resp.json();
         // data.value is normalized 0.0 - 1.0
+        // data.value_lp is normalized 0.0 - 1.0 with LP filtering
+        // data.score is integer score
         if (environment && environment.grass) {
-          // Scale to 0-2000 flowers
-          const targetCount = Math.floor(data.value * 2000);
+          // Flower count is directly set to score
+          const targetCount = Math.floor(data.score);
           environment.grass.flowerCount = targetCount;
+
+          // Sun Azimuth is mapped to 0.2 - 1.0
+          if (data.value < 0.2) {
+            environment.skybox.sunAzimuth = 200;
+          } else {
+            environment.skybox.sunAzimuth = 225 - (125 * data.value);
+          }
         }
       }
     } catch (e) {

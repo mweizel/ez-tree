@@ -29,12 +29,12 @@ export async function createScene(renderer) {
     0.1,
     2000,
   );
-  camera.position.set(100, 20, 0);
+  camera.position.set(100, 80, 0);
 
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
   controls.enablePan = true;
-  controls.minPolarAngle = Math.PI / 2 - 0.2;
+  controls.minPolarAngle = 0.5;
   controls.maxPolarAngle = Math.PI / 2 + 0.13;
   controls.minDistance = 10;
   controls.maxDistance = 150;
